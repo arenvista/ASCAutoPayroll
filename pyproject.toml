@@ -1,0 +1,19 @@
+[project]
+name = "ASCAutoPayroll"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "beautifulsoup4>=4.14.2",
+    "bs4>=0.0.2",
+    "dotenv>=0.9.9",
+    "evdev>=1.9.3",
+    "keyboard>=0.13.5",
+    "lxml>=6.0.2",
+    "pandas>=2.3.3",
+    "pyautogui>=0.9.54",
+    "pynput>=1.8.1",
+    "questionary>=2.1.1",
+    "selenium>=4.37.0",
+]
