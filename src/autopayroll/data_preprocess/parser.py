@@ -44,14 +44,15 @@ class AttendanceParser:
                 year_str = parts[1].strip()
                 time_part_raw = parts[2].strip()
 
-                duration_text = duration_cell.get_text().strip()
-                duration_formatted = duration_text.replace('h ', ':').replace('m', '')
-                try:
-                    h, m = map(int, duration_formatted.split(':'))
-                except ValueError:
-                    h = 0
-                    m = duration_formatted
-                    
+                duration_text = duration_cell.get_text().strip().split(" ")
+                print(f"[DURATION TEXT] => {duration_text}")
+
+                h = next((cell.replace("h", "") for cell in duration_text if "h" in cell), "") or "0"
+                m = next((cell.replace("m", "") for cell in duration_text if "m" in cell), "") or "0"
+
+                print(f"[h,m] => {h}, {m}")
+
+
                 total_minutes = (int(h) * 60) + int(m)
                 billed_time_mins = round(total_minutes / 15) * 15
                 billed_time_hours = billed_time_mins / 60.0
@@ -76,6 +77,7 @@ class AttendanceParser:
                 })
 
         df = pd.DataFrame(visit_data)
+        print(f"[PRINTING DATAFRAME] => {df}")
         full_date_str = df['date_str'] + ' ' + df['year']
         df['date'] = pd.to_datetime(full_date_str, format='%b %d %Y')
         df = df.set_index('date').drop(columns=['date_str', 'year']).sort_index()
@@ -83,7 +85,7 @@ class AttendanceParser:
         filtered_df = df.loc[start_filter:end_filter].copy()
         filtered_df['formatted_date'] = filtered_df.index.strftime('%m/%d/%Y')
         filtered_df['day_of_week'] = filtered_df.index.day_name()
-        filtered_df['optional'] = "ST"
+        # filtered_df['optional'] = "ST"
 
         return filtered_df
 

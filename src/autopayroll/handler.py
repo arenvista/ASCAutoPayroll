@@ -25,7 +25,7 @@ class Handler:
     def __init__ (self, timeblocks_path):
         self.timeblocks_path = timeblocks_path
         return 
-    def select_timeblock(self):
+    async def select_timeblock(self):
         """
         Reads the timeblocks CSV and prompts the user with a fuzzy-searchable menu.
         Returns a tuple of (start_filter, end_filter).
@@ -36,24 +36,20 @@ class Handler:
             print(f"Error: Could not find {self.timeblocks_path}. Make sure the file exists.")
             sys.exit(1)
 
-        # Create a mapping dictionary for the menu options 
         choices_dict = {
             f"Period {row['period']:>2}: {row['start']} to {row['end']}": (row['start'], row['end'])
             for _, row in blocks_df.iterrows()
         }
 
-        # Generate the interactive menu
-        selected_display = questionary.select(
+        # CHANGE: Add 'await' and change .ask() to .ask_async()
+        selected_display = await questionary.select(
             "Fuzzy find and select a timeblock (type to filter/search)  :",
             choices=list(choices_dict.keys()),
-            use_indicator=True, # Shows a pointer next to the selection
-        ).ask()
+            use_indicator=True,
+        ).ask_async()
 
-        # Handle user cancellation (e.g., pressing Ctrl+C)
         if selected_display is None:
             print("\nSelection cancelled. Exiting.")
             sys.exit(0)
 
-        # Return the (start, end) tuple associated with the chosen string
         return choices_dict[selected_display]
-

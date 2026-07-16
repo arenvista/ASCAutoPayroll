@@ -4,6 +4,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.keys import Keys
 from selenium.common.exceptions import TimeoutException
+import questionary
 
 class TimesheetAutomator:
     """Automates UMBC timesheet entry using Selenium and Pandas."""
@@ -27,8 +28,8 @@ class TimesheetAutomator:
             print("Error: Missing credentials in configuration.")
             return
 
-        print(f"Username => {username}\nPassword => {'*' * len(password)}")
-        if login_url is None: raise ValueError("No Login URL")
+        print(f"[NAVIGATING TO TIMESHEET PAGE] => {login_url}")
+        print(f"\tUsername => {username}\n\tPassword => {'*' * len(password)}")
         self.driver.get(login_url)
 
         try:
@@ -39,7 +40,7 @@ class TimesheetAutomator:
             pass_input.send_keys(password)
             
             self.driver.find_element(By.XPATH, '//*[@id="submitButton"]').click()
-            sleep(10) # Allow time for redirection
+            # sleep(10) # Allow time for redirection
         except TimeoutException:
             print("Login fields not found in time.")
 
@@ -101,12 +102,12 @@ class TimesheetAutomator:
         break_input.send_keys(Keys.TAB)
         sleep(timer)
         
-        # 5. Optional Code
-        optional_input = self.wait.until(EC.element_to_be_clickable((By.XPATH, xpaths['optional'])))
-        optional_input.clear()
-        optional_input.send_keys(str(row['optional']))
-        optional_input.send_keys(Keys.TAB)
-        sleep(timer)
+        # # 5. Optional Code
+        # optional_input = self.wait.until(EC.element_to_be_clickable((By.XPATH, xpaths['optional'])))
+        # optional_input.clear()
+        # optional_input.send_keys(str(row['optional']))
+        # optional_input.send_keys(Keys.TAB)
+        # sleep(timer)
         
         # 6. Create Next Row
         if not is_last_row:
@@ -119,7 +120,7 @@ class TimesheetAutomator:
             self.wait.until(EC.presence_of_element_located((By.XPATH, next_date_xpath)))
             sleep(0.5)
 
-    def run(self, csv_file: str, timesheet_url: str) -> None:
+    async def run(self, csv_file: str, timesheet_url: str) -> None:
         print("Processing")
         """Main orchestration method to read data and process the timesheet."""
         try:
@@ -129,6 +130,13 @@ class TimesheetAutomator:
             return
 
         self.login_umbc(timesheet_url)
+
+        choice = await questionary.select(
+            "Finished Loading Page?",
+            choices=["Yes"],
+            use_indicator=True,
+        ).ask_async()
+
         print("Entering timesheet data...")
         self._switch_to_peoplesoft_iframe()
 

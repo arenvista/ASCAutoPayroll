@@ -1,8 +1,11 @@
+import asyncio
+import questionary
 from time import sleep
 from pathlib import Path
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+
 
 class UMBCTimesheetScraper:
     def __init__(self, driver, config) -> None:
@@ -17,7 +20,7 @@ class UMBCTimesheetScraper:
         if not self.username or not self.password:
             raise ValueError("Missing UMBC credentials in config.")
 
-    def login(self) -> None:
+    async def login(self) -> None:
         print("Navigating to target URL...")
         self.driver.get(self.target_url)
         wait = WebDriverWait(self.driver, 15)
@@ -28,22 +31,28 @@ class UMBCTimesheetScraper:
         password_field = wait.until(EC.element_to_be_clickable((By.XPATH, '//*[@id="password"]')))
         password_field.send_keys(self.password)
 
-        self.driver.find_element(By.XPATH, '//*[@id="submitButton"]').click()
-        sleep(10)
+        submit_button = wait.until(EC.element_to_be_clickable((By.XPATH, '//*[@id="submitButton"]')))
+        submit_button.click()
 
-    def fetch_and_save_html(self) -> None:
-        print("Waiting for timesheet data to fully load...")
-        sleep(10) 
+        wait.until(lambda d: d.execute_script("return document.readyState") == "complete")
+        wait.until(EC.presence_of_element_located((By.TAG_NAME, "body"))).send_keys("\ue00c")
+
+    async def fetch_and_save_html(self) -> None:
+        choice = await questionary.select(
+            "Finished Loading Page?",
+            choices=["Yes"],
+            use_indicator=True,
+        ).ask_async()
 
         html_source: str = self.driver.page_source
         self.config.data_dir.mkdir(parents=True, exist_ok=True)
 
         with open(self.output_file, 'w', encoding='utf-8') as f:
             f.write(html_source)
-            
+
         print(f"Save successful to {self.output_file}!")
 
-    def run(self) -> None:
-        # Just run the tasks using the inherited driver
-        self.login()
-        self.fetch_and_save_html()
+    async def run(self) -> None:
+        await self.login()
+        # Ensure you await the async fetching method
+        await self.fetch_and_save_html()
