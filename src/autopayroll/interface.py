@@ -1,95 +1,154 @@
-import os
+"""Interactive CLI: menu loop and pipeline orchestration."""
+
+import argparse
+import logging
 import sys
 from enum import Enum
+
 import questionary
 from selenium import webdriver
 from selenium.webdriver.firefox.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 
-from autopayroll.config import ConfigSettings 
-from autopayroll.handler import Handler 
+from autopayroll.automator import TimesheetAutomator
+from autopayroll.config import ConfigSettings
+from autopayroll.errors import AutoPayrollError, UserAbort
+from autopayroll.parser import AttendanceParser
+from autopayroll.scraper import UMBCTimesheetScraper
+from autopayroll.timeblocks import prompt_for_timeblock
 
-# CORRECTED: Pointing to the specific files inside the submodules
-from autopayroll.auto_insert.inputer import TimesheetAutomator 
-from autopayroll.data_preprocess.parser import AttendanceParser 
-from autopayroll.data_gather.pull_sheet import UMBCTimesheetScraper
+log = logging.getLogger(__name__)
+
 
 class ControlFlow(Enum):
     EXIT = 0
     PROCESS = 1
+    DRY_RUN = 2
+
 
 class Interface:
-    def __init__(self) -> None:
+    def __init__(self, dry_run: bool = False) -> None:
         self.config = ConfigSettings()
-        self.handler = Handler(self.config.timeblock_path)
-        self._setup_driver()
-        self.timesheet_mgr = TimesheetAutomator(self.driver, self.wait, self.config)
+        self.dry_run = dry_run
+        # The WebDriver is started lazily so choosing "Exit" (or a dry run that
+        # never needs the browser) doesn't pay Firefox's startup cost.
+        self.driver = None
+        self.wait: WebDriverWait | None = None
+        self.timesheet_mgr: TimesheetAutomator | None = None
 
-    def _setup_driver(self) -> None:
-        """Configures and initializes the Firefox WebDriver."""
-        print(f"Setting up Firefox profile at: {self.config.profile_dir}")
-        options: Options = Options()
+    def _ensure_driver(self) -> None:
+        if self.driver is not None:
+            return
+        log.info("Setting up Firefox profile at: %s", self.config.profile_dir)
+        options = Options()
         if self.config.profile_dir:
             options.add_argument("-profile")
             options.add_argument(str(self.config.profile_dir))
 
-        print("Initializing WebDriver...")
+        log.info("Initializing WebDriver...")
         self.driver = webdriver.Firefox(options=options)
-        self.wait: WebDriverWait = WebDriverWait(self.driver, self.config.wait_time)
+        self.wait = WebDriverWait(self.driver, self.config.wait_time)
+        self.timesheet_mgr = TimesheetAutomator(self.driver, self.wait, self.config)
 
-    async def _process_timesheet(self):
-        timeblock = await self.handler.select_timeblock()
-        TIMESHEET_PAGE = (
-            "https://hrprd-web.pshr.umbc.edu/psp/ps/EMPLOYEE/HRMS/c/UM_ETS_EMP."
-            "UM_ETS_EMP_SUMMARY.GBL?PORTALPARAM_PTCNAV=UM_ETS_EMP_SUMMARY_GBL&"
-            "EOPP.SCNode=HRMS&EOPP.SCPortal=EMPLOYEE&EOPP.SCName=UMBC_TIME_ENTRY_LEAVE_PROCESS&"
-            "EOPP.SCLabel=UMBC%20Time%20and%20Leave%20Processing&EOPP.SCPTfname=UMBC_TIME_ENTRY_LEAVE_PROCESS&"
-            "FolderPath=PORTAL_ROOT_OBJECT.UMBC_TIME_ENTRY_LEAVE_PROCESS.UM_ETS_TIMESHEET.UM_ETS_EMP_SUMMARY_GBL&IsFolder=false"
-        )
-        
-        CSV_FILEPATH = self.config.data_dir / f"{timeblock[0]}_{timeblock[1]}.csv"
-        
+    def _process_timesheet(self, dry_run: bool) -> None:
+        start, end = prompt_for_timeblock(self.config.timeblock_path)
+        csv_filepath = self.config.data_dir / f"{start}_{end}.csv"
+
+        self._ensure_driver()
+
         print("[GETTING LATEST TIMESHEET]")
         scraper = UMBCTimesheetScraper(self.driver, self.config)
-        await scraper.run()
+        scraper.run()
 
-        print(f"[PARSING NEW TIMEBLOCK] => {timeblock[0]} to {timeblock[1]}...")
-        parser = AttendanceParser(html_file=self.config.html_file, timeblocks_file=self.config.timeblock_path)
-        parser.run(timeblock[0], timeblock[1], self.config.data_dir)
-            
-        await self.timesheet_mgr.run(str(CSV_FILEPATH), TIMESHEET_PAGE)
+        print(f"[PARSING NEW TIMEBLOCK] => {start} to {end}...")
+        parser = AttendanceParser(
+            html_file=self.config.html_file,
+            timeblocks_file=self.config.timeblock_path,
+            pay_rate=self.config.pay_rate,
+        )
+        df = parser.run(start, end, csv_filepath)
 
-    def _process_exit(self):
+        if dry_run:
+            print(f"\n[DRY RUN] Parsed {len(df)} rows; CSV saved to {csv_filepath}.")
+            print("[DRY RUN] Skipping PeopleSoft entry.")
+            return
+
+        # Show the parsed rows and confirm before touching PeopleSoft.
+        print("\nParsed entries:")
+        print(df[["formatted_date", "day_of_week", "start_time", "end_time"]].to_string())
+        proceed = questionary.confirm(
+            "Enter these rows into the PeopleSoft timesheet?", default=True
+        ).ask()
+        if not proceed:
+            raise UserAbort("Timesheet entry cancelled by user.")
+
+        self.timesheet_mgr.run(str(csv_filepath), self.config.timesheet_url)
+
+    def _process_exit(self) -> None:
         print("\nExiting. Goodbye!")
-        if hasattr(self, 'driver') and self.driver:
+        if self.driver:
             self.driver.quit()
         sys.exit(0)
 
-    async def _process_request(self, request: ControlFlow):
-        match request:
-            case ControlFlow.PROCESS:
-                return await self._process_timesheet()
-            case ControlFlow.EXIT:
-                return self._process_exit()
-            case _:
-                raise Exception('Unknown exception occurred')
+    def _process_request(self, request: ControlFlow) -> None:
+        try:
+            match request:
+                case ControlFlow.PROCESS:
+                    # --dry-run makes even "Process" parse-only.
+                    self._process_timesheet(dry_run=self.dry_run)
+                case ControlFlow.DRY_RUN:
+                    self._process_timesheet(dry_run=True)
+                case ControlFlow.EXIT:
+                    self._process_exit()
+                case _:
+                    raise RuntimeError(f"Unknown request: {request}")
+        except UserAbort as exc:
+            log.info("Aborted: %s", exc)
+            print(f"\n{exc} Returning to menu.")
+        except AutoPayrollError as exc:
+            log.error("%s", exc)
+            print(f"\nError: {exc}\nReturning to menu (browser left open).")
 
-    async def main(self):
-            """Main menu loop."""
-            scripts = {
-                "1.  Process a Timesheet": ControlFlow.PROCESS,
-                "2. 󰈆 Exit": ControlFlow.EXIT
-            }
+    def main(self) -> None:
+        """Main menu loop."""
+        scripts = {
+            "1.  Process a Timesheet": ControlFlow.PROCESS,
+            "2.  Dry run (parse only, no PeopleSoft entry)": ControlFlow.DRY_RUN,
+            "3. 󰈆 Exit": ControlFlow.EXIT,
+        }
+        while True:
+            choice = questionary.select(
+                "What would you like to do?",
+                choices=list(scripts.keys()),
+                use_indicator=True,
+            ).ask()
+            if choice is None:  # Ctrl-C / Esc at the menu
+                self._process_exit()
+            self._process_request(scripts[choice])
 
-            while True:
-                # CHANGE: Use await and .ask_async() here
-                choice = await questionary.select(
-                    "What would you like to do?",
-                    choices=list(scripts.keys()),
-                    use_indicator=True
-                ).ask_async()
 
-                await self._process_request(scripts[choice])
+def _configure_logging(verbose: bool) -> None:
+    logging.basicConfig(
+        level=logging.DEBUG if verbose else logging.INFO,
+        format="%(levelname)s %(name)s: %(message)s",
+    )
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(prog="autopayroll", description=__doc__)
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Default the menu to parse-only (no PeopleSoft entry).",
+    )
+    parser.add_argument(
+        "-v", "--verbose", action="store_true", help="Enable debug logging."
+    )
+    args = parser.parse_args()
+
+    _configure_logging(args.verbose)
+    Interface(dry_run=args.dry_run).main()
+
+
 if __name__ == "__main__":
-    import asyncio
-    asyncio.run(Interface().main())
+    main()

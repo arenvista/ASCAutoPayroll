@@ -5,24 +5,42 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "ASCAutoPayroll"
 version = "0.1.0"
-description = "Add your description here"
+description = "Selenium automation that scrapes UMBC TRAC attendance and auto-fills the PeopleSoft timesheet."
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "beautifulsoup4>=4.14.2",
-    "bs4>=0.0.2",
-    "dotenv>=0.9.9",
-    "evdev>=1.9.3",
-    "keyboard>=0.13.5",
+    "keyring>=25.0.0",
     "lxml>=6.0.2",
     "pandas>=2.3.3",
-    "pyautogui>=0.9.54",
-    "pyinstaller>=6.19.0",
-    "pynput>=1.8.1",
+    "python-dotenv>=1.0.1",
     "questionary>=2.1.1",
     "selenium>=4.37.0",
+]
+
+[project.scripts]
+autopayroll = "autopayroll.interface:main"
+
+[dependency-groups]
+dev = [
+    "pyinstaller>=6.19.0",
+    "pytest>=8.0.0",
+    "ruff>=0.6.0",
 ]
 
 [tool.setuptools]
 packages = ["autopayroll"]
 package-dir = {"" = "src"}
+
+[tool.ruff]
+line-length = 90
+target-version = "py313"
+
+[tool.ruff.lint]
+extend-select = ["I", "UP", "B"]
+# Naive datetimes are correct for this timezone-local tool; the broad except
+# around optional keyring backends is deliberate.
+ignore = ["DTZ007", "DTZ011", "BLE001"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
