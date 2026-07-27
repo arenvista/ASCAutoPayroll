@@ -43,7 +43,29 @@ ASCAutoPayroll/
 
 Runtime dependencies (see `pyproject.toml`): `selenium`, `pandas`, `beautifulsoup4`, `lxml`, `questionary`, `python-dotenv`, `keyring`. Dev tools (`pytest`, `ruff`, `pyinstaller`) live in the `dev` dependency group.
 
-## Setup
+## Quick install (one-click)
+
+The installer bootstraps everything — it installs `uv` if needed, sets up the
+app, and creates a launcher you can double-click. You only need Firefox
+installed separately.
+
+| OS | Do this |
+|----|---------|
+| **Windows** | Double-click **`install.bat`** |
+| **macOS** | Double-click **`install.command`** in Finder |
+| **Linux** | Run **`./install.sh`** in a terminal |
+
+After it finishes, launch the app by:
+
+- **Windows** — double-click `AutoPayroll.bat` (or the new Desktop shortcut)
+- **macOS** — double-click `AutoPayroll.command`
+- **Linux** — run `./AutoPayroll.sh` (or find *ASCAutoPayroll* in your app menu)
+
+> First-run note: macOS may warn that `install.command` is from an
+> unidentified developer — right-click it and choose **Open** the first time.
+> On Windows, if SmartScreen prompts, choose **More info → Run anyway**.
+
+## Manual setup
 
 1. Install dependencies and run:
    ```bash

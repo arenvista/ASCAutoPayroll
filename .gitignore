@@ -10,3 +10,8 @@ firefox_profile/
 
 # Virtual environments
 .venv
+
+# Installer-generated launchers
+AutoPayroll.command
+AutoPayroll.sh
+AutoPayroll.bat
