@@ -4,11 +4,34 @@ A Selenium-powered automation tool for UMBC student timesheet entry. It scrapes 
 
 ## How it works
 
-The tool runs as an interactive CLI with three actions:
+The tool runs as an interactive CLI with four actions:
 
 1. **Process a Timesheet** — walks through the full pipeline below and enters the rows into PeopleSoft.
-2. **Dry run** — runs the pipeline up to the CSV export and pay estimate, then stops (never touches PeopleSoft).
-3. **Exit** — closes the browser and quits.
+2. **Process from a schedule CSV** — skips TRAC scraping and parsing; enters the times from a weekly schedule CSV instead (see below).
+3. **Dry run** — runs the pipeline up to the CSV export and pay estimate, then stops (never touches PeopleSoft).
+4. **Exit** — closes the browser and quits.
+
+### Schedule CSV mode
+
+If you work fixed hours, list your weekly shifts in a CSV (see `example.csv`):
+
+```csv
+day,start,stop
+mon,11:00,13:00
+tue,11:00,14:00
+tue,16:00,18:00
+```
+
+After you pick a pay period, each row is applied to every matching weekday in that period, and the times are entered exactly as written (no rounding). A day can have several rows.
+
+To give the two weeks of a pay period different hours, add an optional `week` column (`1` = first week of the period, `2` = second). A blank week means the row applies to both weeks. If only one week number is used, or the column is absent, that week is repeated for both:
+
+```csv
+day,start,stop,week
+mon,11:00,13:00,1
+mon,14:00,16:00,2
+fri,09:00,10:00,
+``` Days accept `mon`..`sun` or full names; times accept `14:00` or `2:00PM`. Pass `--schedule path/to/file.csv` to pre-fill the path prompt; `--dry-run` works here too.
 
 ### Pipeline
 
@@ -30,6 +53,7 @@ ASCAutoPayroll/
 │   ├── timeblocks.py       # Pay-period generation + selection prompt (TimeBlockGenerator)
 │   ├── scraper.py          # Scrapes TRAC Cloud attendance page (UMBCTimesheetScraper)
 │   ├── parser.py           # Parses/rounds attendance HTML into a billing CSV (AttendanceParser)
+│   ├── schedule.py         # Builds rows from a weekly schedule CSV instead of scraping
 │   ├── automator.py        # Fills the PeopleSoft timesheet form (TimesheetAutomator)
 │   └── errors.py           # Typed exceptions (LoginError, PageStateError, UserAbort)
 └── tests/                  # pytest unit tests for the pure parsing/rounding/period logic
@@ -105,6 +129,7 @@ Leaving `UMBC_PAS` blank and using the keyring/prompt keeps your password out of
 ```bash
 uv run autopayroll            # interactive menu
 uv run autopayroll --dry-run  # default the menu to parse-only
+uv run autopayroll --schedule example.csv  # pre-fill the schedule CSV path
 uv run autopayroll -v         # debug logging
 ```
 

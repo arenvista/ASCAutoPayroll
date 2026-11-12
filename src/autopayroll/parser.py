@@ -14,6 +14,15 @@ from bs4 import BeautifulSoup
 log = logging.getLogger(__name__)
 
 
+def print_pay_summary(df: pd.DataFrame, pay_rate: float) -> None:
+    billed_hours = df["billed_time_hours"].sum()
+    raw_comp = billed_hours * pay_rate
+    print(
+        f"\nStats:\n\tTotal Billed Hours: {billed_hours}hrs\n"
+        f"\tRaw Comp [${raw_comp:.2f}] | Estimate Net [${raw_comp * 0.7:.2f}]"
+    )
+
+
 class AttendanceParser:
     def __init__(self, html_file=None, timeblocks_file="timeblocks.csv", pay_rate=17.5):
         self.html_file = Path(html_file) if html_file else None
@@ -142,12 +151,7 @@ class AttendanceParser:
         log.info("Parsing date range: %s to %s", start_filter, end_filter)
         df = self.parse(start_filter, end_filter)
 
-        billed_hours = df["billed_time_hours"].sum()
-        raw_comp = billed_hours * self.pay_rate
-        print(
-            f"\nStats:\n\tTotal Billed Hours: {billed_hours}hrs\n"
-            f"\tRaw Comp [${raw_comp:.2f}] | Estimate Net [${raw_comp * 0.7:.2f}]"
-        )
+        print_pay_summary(df, self.pay_rate)
 
         output_path = Path(output_path)
         df.to_csv(output_path)

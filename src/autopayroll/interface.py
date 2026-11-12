@@ -13,7 +13,8 @@ from selenium.webdriver.support.ui import WebDriverWait
 from autopayroll.automator import TimesheetAutomator
 from autopayroll.config import ConfigSettings
 from autopayroll.errors import AutoPayrollError, UserAbort
-from autopayroll.parser import AttendanceParser
+from autopayroll.parser import AttendanceParser, print_pay_summary
+from autopayroll.schedule import build_timesheet
 from autopayroll.scraper import UMBCTimesheetScraper
 from autopayroll.timeblocks import prompt_for_timeblock
 
@@ -24,12 +25,15 @@ class ControlFlow(Enum):
     EXIT = 0
     PROCESS = 1
     DRY_RUN = 2
+    SCHEDULE = 3
 
 
 class Interface:
-    def __init__(self, dry_run: bool = False) -> None:
+    def __init__(self, dry_run: bool = False, schedule: str | None = None) -> None:
         self.config = ConfigSettings()
         self.dry_run = dry_run
+        # Last schedule CSV used; pre-fills the path prompt.
+        self.schedule = schedule
         # The WebDriver is started lazily so choosing "Exit" (or a dry run that
         # never needs the browser) doesn't pay Firefox's startup cost.
         self.driver = None
@@ -67,14 +71,39 @@ class Interface:
             pay_rate=self.config.pay_rate,
         )
         df = parser.run(start, end, csv_filepath)
+        self._enter_rows(df, csv_filepath, dry_run)
 
+    def _process_schedule(self, dry_run: bool) -> None:
+        """Enter the times from a weekly schedule CSV, skipping TRAC entirely."""
+        path = questionary.path(
+            "Schedule CSV (columns: day,start,stop):",
+            default=self.schedule or "",
+        ).ask()
+        if not path:
+            raise UserAbort("No schedule CSV chosen.")
+        self.schedule = path
+
+        start, end = prompt_for_timeblock(self.config.timeblock_path)
+        csv_filepath = self.config.data_dir / f"{start}_{end}.csv"
+
+        print(f"[BUILDING FROM SCHEDULE] => {start} to {end}...")
+        try:
+            df = build_timesheet(path, start, end)
+        except (OSError, ValueError) as exc:
+            raise AutoPayrollError(f"Could not use schedule: {exc}") from exc
+        print_pay_summary(df, self.config.pay_rate)
+        df.to_csv(csv_filepath)
+        log.info("Saved export to %s", csv_filepath)
+        self._enter_rows(df, csv_filepath, dry_run)
+
+    def _enter_rows(self, df, csv_filepath, dry_run: bool) -> None:
         if dry_run:
-            print(f"\n[DRY RUN] Parsed {len(df)} rows; CSV saved to {csv_filepath}.")
+            print(f"\n[DRY RUN] Prepared {len(df)} rows; CSV saved to {csv_filepath}.")
             print("[DRY RUN] Skipping PeopleSoft entry.")
             return
 
-        # Show the parsed rows and confirm before touching PeopleSoft.
-        print("\nParsed entries:")
+        # Show the rows and confirm before touching PeopleSoft.
+        print("\nEntries:")
         print(df[["formatted_date", "day_of_week", "start_time", "end_time"]].to_string())
         proceed = questionary.confirm(
             "Enter these rows into the PeopleSoft timesheet?", default=True
@@ -82,6 +111,7 @@ class Interface:
         if not proceed:
             raise UserAbort("Timesheet entry cancelled by user.")
 
+        self._ensure_driver()
         self.timesheet_mgr.run(str(csv_filepath), self.config.timesheet_url)
 
     def _process_exit(self) -> None:
@@ -98,6 +128,8 @@ class Interface:
                     self._process_timesheet(dry_run=self.dry_run)
                 case ControlFlow.DRY_RUN:
                     self._process_timesheet(dry_run=True)
+                case ControlFlow.SCHEDULE:
+                    self._process_schedule(dry_run=self.dry_run)
                 case ControlFlow.EXIT:
                     self._process_exit()
                 case _:
@@ -113,8 +145,9 @@ class Interface:
         """Main menu loop."""
         scripts = {
             "1.  Process a Timesheet": ControlFlow.PROCESS,
-            "2.  Dry run (parse only, no PeopleSoft entry)": ControlFlow.DRY_RUN,
-            "3. 󰈆 Exit": ControlFlow.EXIT,
+            "2.  Process from a schedule CSV (no TRAC)": ControlFlow.SCHEDULE,
+            "3.  Dry run (parse only, no PeopleSoft entry)": ControlFlow.DRY_RUN,
+            "4. 󰈆 Exit": ControlFlow.EXIT,
         }
         while True:
             choice = questionary.select(
@@ -142,12 +175,17 @@ def main() -> None:
         help="Default the menu to parse-only (no PeopleSoft entry).",
     )
     parser.add_argument(
+        "--schedule",
+        metavar="CSV",
+        help="Default path for the schedule-CSV menu option (day,start,stop).",
+    )
+    parser.add_argument(
         "-v", "--verbose", action="store_true", help="Enable debug logging."
     )
     args = parser.parse_args()
 
     _configure_logging(args.verbose)
-    Interface(dry_run=args.dry_run).main()
+    Interface(dry_run=args.dry_run, schedule=args.schedule).main()
 
 
 if __name__ == "__main__":
