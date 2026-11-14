@@ -6,11 +6,10 @@ import sys
 from enum import Enum
 
 import questionary
-from selenium import webdriver
-from selenium.webdriver.firefox.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 
 from autopayroll.automator import TimesheetAutomator
+from autopayroll.browser import driver_alive, quit_quietly, start_firefox
 from autopayroll.config import ConfigSettings
 from autopayroll.errors import AutoPayrollError, UserAbort
 from autopayroll.parser import AttendanceParser, print_pay_summary
@@ -42,15 +41,11 @@ class Interface:
 
     def _ensure_driver(self) -> None:
         if self.driver is not None:
-            return
-        log.info("Setting up Firefox profile at: %s", self.config.profile_dir)
-        options = Options()
-        if self.config.profile_dir:
-            options.add_argument("-profile")
-            options.add_argument(str(self.config.profile_dir))
-
-        log.info("Initializing WebDriver...")
-        self.driver = webdriver.Firefox(options=options)
+            if driver_alive(self.driver):
+                return
+            # Firefox was closed, or the automator quit it after a run.
+            quit_quietly(self.driver)
+        self.driver = start_firefox(self.config)
         self.wait = WebDriverWait(self.driver, self.config.wait_time)
         self.timesheet_mgr = TimesheetAutomator(self.driver, self.wait, self.config)
 
@@ -117,7 +112,7 @@ class Interface:
     def _process_exit(self) -> None:
         print("\nExiting. Goodbye!")
         if self.driver:
-            self.driver.quit()
+            quit_quietly(self.driver)
         sys.exit(0)
 
     def _process_request(self, request: ControlFlow) -> None:

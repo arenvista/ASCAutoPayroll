@@ -124,26 +124,30 @@ class TimeBlockGenerator:
         return periods
 
 
+def read_periods(timeblocks_path) -> list[dict]:
+    """Load the saved pay periods as [{"period": k, "start": ..., "end": ...}]."""
+    with open(timeblocks_path, newline="") as fp:
+        return [
+            {"period": int(row["period"]), "start": row["start"], "end": row["end"]}
+            for row in csv.DictReader(fp)
+        ]
+
+
 def prompt_for_timeblock(
     timeblocks_path, today: date | None = None
 ) -> tuple[str, str]:
     """Fuzzy-search prompt for a pay period. Defaults the cursor to the period
     containing today. Returns (start, end); raises UserAbort if cancelled."""
-    import pandas as pd
-
     today = today or date.today()
     try:
-        blocks_df = pd.read_csv(timeblocks_path)
+        periods = read_periods(timeblocks_path)
     except FileNotFoundError:
         log.error("Could not find %s. Make sure the file exists.", timeblocks_path)
         sys.exit(1)
 
     choices_dict = {
-        f"Period {row['period']:>2}: {row['start']} to {row['end']}": (
-            str(row["start"]),
-            str(row["end"]),
-        )
-        for _, row in blocks_df.iterrows()
+        f"Period {p['period']:>2}: {p['start']} to {p['end']}": (p["start"], p["end"])
+        for p in periods
     }
 
     # Default the highlighted choice to the period that contains today.

@@ -178,14 +178,17 @@ class TimesheetAutomator:
             return None
         return got_t.time() == want_t.time()
 
-    def _verify_entries(self, df: pd.DataFrame) -> bool:
-        """Read each field back and compare against the DataFrame before submit.
+    def check_entries(self, df: pd.DataFrame) -> list[dict]:
+        """Read each row's fields back from the page and compare with the frame.
+
+        Returns one {"index", "date", "issues"} dict per row, where issues lists
+        the fields that did not clearly match as {"field", "expected", "got",
+        "match"}: match is False for a mismatch, None for "could not confirm".
 
         Best-effort: the comparison normalizes formats, but the exact way
         PeopleSoft echoes values has not been validated against the live portal.
         """
-        print("\nVerifying entered values (heuristic — confirm visually too):")
-        all_ok = True
+        results = []
         for index, row in df.iterrows():
             xpaths = self._row_xpaths(int(index))
             expected = {
@@ -193,8 +196,7 @@ class TimesheetAutomator:
                 "start": str(row["start_time"]),
                 "end": str(row["end_time"]),
             }
-            marks = []
-            details = []
+            issues = []
             for field, want in expected.items():
                 try:
                     got = self.driver.find_element(
@@ -203,25 +205,69 @@ class TimesheetAutomator:
                 except NoSuchElementException:
                     got = None
                 result = self._values_match(field, want, got)
-                if result is False:
+                if result is not True:
+                    issues.append(
+                        {"field": field, "expected": want, "got": got, "match": result}
+                    )
+            results.append(
+                {
+                    "index": int(index),
+                    "date": str(row["formatted_date"]),
+                    "issues": issues,
+                }
+            )
+        return results
+
+    def _verify_entries(self, df: pd.DataFrame) -> bool:
+        """Print a per-row ✓/✗ report; True if no field mismatched."""
+        print("\nVerifying entered values (heuristic — confirm visually too):")
+        all_ok = True
+        for check in self.check_entries(df):
+            marks = []
+            details = []
+            for issue in check["issues"]:
+                field, want, got = issue["field"], issue["expected"], issue["got"]
+                if issue["match"] is False:
                     marks.append("✗")
                     details.append(f"{field}: expected {want!r}, got {got!r}")
                     all_ok = False
-                elif result is None:
+                else:
                     marks.append("?")
                     details.append(f"{field}: could not confirm (got {got!r})")
             mark = "✓" if not marks else "".join(marks)
-            print(f"  {mark} row {index} ({row['formatted_date']})")
+            print(f"  {mark} row {check['index']} ({check['date']})")
             for d in details:
                 print(f"      - {d}")
         return all_ok
 
-    def run(self, csv_file: str, timesheet_url: str) -> None:
-        """Read the billing CSV and enter each row into the timesheet."""
+    @staticmethod
+    def load_rows(csv_file) -> pd.DataFrame:
+        """Read the billing CSV; rows come back indexed 0..n-1, matching the
+        PeopleSoft row ids they are typed into."""
         try:
-            df = pd.read_csv(csv_file)
+            return pd.read_csv(csv_file)
         except Exception as exc:
             raise PageStateError(f"Failed to read CSV {csv_file}: {exc}") from exc
+
+    def enter_rows(self, df: pd.DataFrame, on_row=None) -> None:
+        """Type every row into the timesheet (call after the page has loaded).
+
+        `on_row(done, total)` runs after each row; raising from it stops early.
+        """
+        log.info("Entering timesheet data...")
+        self._switch_to_peoplesoft_iframe()
+
+        total_rows = len(df)
+        for index, row in df.iterrows():
+            is_last_row = index + 1 == total_rows
+            self._enter_row_data(index=int(index), row=row, is_last_row=is_last_row)
+            sleep(1)
+            if on_row is not None:
+                on_row(int(index) + 1, total_rows)
+
+    def run(self, csv_file: str, timesheet_url: str) -> None:
+        """Read the billing CSV and enter each row into the timesheet."""
+        df = self.load_rows(csv_file)
 
         if df.empty:
             print("No rows to enter for this pay period.")
@@ -237,14 +283,7 @@ class TimesheetAutomator:
         if choice is None:
             raise UserAbort("Cancelled before entering timesheet data.")
 
-        log.info("Entering timesheet data...")
-        self._switch_to_peoplesoft_iframe()
-
-        total_rows = len(df)
-        for index, row in df.iterrows():
-            is_last_row = index + 1 == total_rows
-            self._enter_row_data(index=int(index), row=row, is_last_row=is_last_row)
-            sleep(1)
+        self.enter_rows(df)
 
         if self._verify_entries(df):
             print("\nAll rows match the parsed data. Review and submit in the browser.")

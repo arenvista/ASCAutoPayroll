@@ -66,7 +66,10 @@ class UMBCTimesheetScraper:
         ).ask()
         if choice is None:
             raise UserAbort("Cancelled before saving attendance HTML.")
+        self.save_html()
 
+    def save_html(self) -> None:
+        """Save the page as currently rendered to the attendance HTML file."""
         html_source: str = self.driver.page_source
         self.config.data_dir.mkdir(parents=True, exist_ok=True)
 

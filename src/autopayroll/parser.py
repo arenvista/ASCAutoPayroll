@@ -13,13 +13,27 @@ from bs4 import BeautifulSoup
 
 log = logging.getLogger(__name__)
 
+# Rough share of gross pay left after withholding, for the net estimate.
+NET_ESTIMATE_RATIO = 0.7
+
+
+def pay_summary(df: pd.DataFrame, pay_rate: float) -> dict[str, float]:
+    """Billed hours, gross pay, and an estimated net for a timesheet frame."""
+    billed_hours = float(df["billed_time_hours"].sum())
+    gross = billed_hours * pay_rate
+    return {
+        "billed_hours": billed_hours,
+        "gross": gross,
+        "net_estimate": gross * NET_ESTIMATE_RATIO,
+    }
+
 
 def print_pay_summary(df: pd.DataFrame, pay_rate: float) -> None:
-    billed_hours = df["billed_time_hours"].sum()
-    raw_comp = billed_hours * pay_rate
+    summary = pay_summary(df, pay_rate)
     print(
-        f"\nStats:\n\tTotal Billed Hours: {billed_hours}hrs\n"
-        f"\tRaw Comp [${raw_comp:.2f}] | Estimate Net [${raw_comp * 0.7:.2f}]"
+        f"\nStats:\n\tTotal Billed Hours: {summary['billed_hours']}hrs\n"
+        f"\tRaw Comp [${summary['gross']:.2f}] | "
+        f"Estimate Net [${summary['net_estimate']:.2f}]"
     )
 
 

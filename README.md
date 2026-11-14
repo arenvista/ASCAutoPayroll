@@ -2,9 +2,11 @@
 
 A Selenium-powered automation tool for UMBC student timesheet entry. It scrapes attendance/visit records from the TRAC Cloud system, parses and rounds the raw clock-in/clock-out times into billable increments, and then auto-fills the resulting entries into the UMBC PeopleSoft (PSHR) timesheet portal — removing the need to manually transcribe hours every pay period.
 
+It comes as a [desktop app](#desktop-app) and as the original interactive CLI; both drive the same pipeline and share the same settings.
+
 ## How it works
 
-The tool runs as an interactive CLI with four actions:
+The CLI offers four actions:
 
 1. **Process a Timesheet** — walks through the full pipeline below and enters the rows into PeopleSoft.
 2. **Process from a schedule CSV** — skips TRAC scraping and parsing; enters the times from a weekly schedule CSV instead (see below).
@@ -49,13 +51,20 @@ ASCAutoPayroll/
 ├── pyproject.toml          # Project metadata & dependencies
 ├── src/autopayroll/
 │   ├── interface.py        # CLI menu loop, orchestration, lazy WebDriver (Interface)
+│   ├── bridge.py           # JSON-lines backend the desktop app talks to (Bridge)
 │   ├── config.py           # Settings, credentials, URLs, tunables (ConfigSettings)
+│   ├── prompts.py          # Credential prompts: terminal (CLI) or window (desktop app)
+│   ├── browser.py          # Starts/checks/closes the Selenium-driven Firefox
 │   ├── timeblocks.py       # Pay-period generation + selection prompt (TimeBlockGenerator)
 │   ├── scraper.py          # Scrapes TRAC Cloud attendance page (UMBCTimesheetScraper)
 │   ├── parser.py           # Parses/rounds attendance HTML into a billing CSV (AttendanceParser)
 │   ├── schedule.py         # Builds rows from a weekly schedule CSV instead of scraping
 │   ├── automator.py        # Fills the PeopleSoft timesheet form (TimesheetAutomator)
 │   └── errors.py           # Typed exceptions (LoginError, PageStateError, UserAbort)
+├── gui/                    # Desktop app (Tauri 2 + Svelte), see "Desktop app" below
+│   ├── src/                # The window's UI (Svelte + TypeScript)
+│   ├── src-tauri/          # Rust shell: window, dialogs, and the backend process
+│   └── scripts/            # build-backend.mjs freezes the Python backend for release
 └── tests/                  # pytest unit tests for the pure parsing/rounding/period logic
 ```
 
@@ -111,8 +120,10 @@ After it finishes, launch the app by:
    PROFILE_DIR=""     # Path to a Firefox profile (used for persistent login/session state)
    UMBC_USR=""        # UMBC username
    UMBC_PAS=""        # UMBC password (optional — see Credentials below)
+   PAY_RATE=""        # Hourly rate for the pay estimate (optional, default 17.5)
    ```
    At minimum `PROFILE_DIR` and `UMBC_USR` should be set. The password may be left blank.
+   The desktop app's Settings page edits this same file.
 
 ### Credentials
 
@@ -141,6 +152,36 @@ Then follow the interactive prompts:
 4. The tool parses the listing, prints a summary of billed hours and estimated pay, saves a CSV, and shows the parsed rows.
 5. Confirm to continue; the browser navigates to PeopleSoft and auto-fills each row. Review the ✓/✗ verification, then press Enter to close the browser once you've submitted.
 
+## Desktop app
+
+`gui/` wraps the same pipeline in a window built with [Tauri 2](https://v2.tauri.app/). Pick a pay period and a source (TRAC or a schedule CSV, with a live preview), review the entries and pay estimate before PeopleSoft is touched, then watch each row get typed in and checked (✓/✗/? per row). Steps that need you, such as finishing a Duo sign-in in Firefox, show up as a Continue button. The Settings page manages your username, the keyring password, the Firefox profile, and the pay rate.
+
+### Running it from source
+
+Requirements, on top of the Python setup above: Rust (stable), Node.js 20.19+ or 22.12+, and Tauri's [system dependencies](https://v2.tauri.app/start/prerequisites/) (on Linux, `webkit2gtk-4.1` and friends).
+
+```bash
+uv sync            # the app runs the Python backend from this venv in dev builds
+cd gui
+npm install
+npm run tauri dev  # opens the window; Python changes apply after a restart
+```
+
+Set `AUTOPAYROLL_VERBOSE=1` before launching to get debug logging in the app's log panel.
+
+### Building an installable app
+
+```bash
+cd gui
+npm run build:app
+```
+
+This freezes the Python backend into a single executable with PyInstaller (`npm run build:backend`, about two minutes), then builds and bundles the app with it. Installers land in `gui/src-tauri/target/release/bundle/` (`.deb`, `.rpm`, and AppImage on Linux; `.msi`/`.exe` on Windows; `.dmg`/`.app` on macOS). Build on each OS you want to ship to, since the frozen backend is platform-specific. Users still need Firefox installed.
+
+### How it fits together
+
+The window (Svelte, `gui/src`) never talks to Selenium directly. The Rust shell (`gui/src-tauri/src/backend.rs`) starts `autopayroll.bridge` and relays one JSON message per line between the window and the bridge's stdin/stdout. Debug builds run the bridge from the repo's `.venv`; release builds run the PyInstaller executable bundled next to the app. The bridge reuses the CLI's building blocks and asks its questions (Continue, review, a missing password) through the window. Closing the window shuts the bridge down, which closes Firefox; if a run is going or Firefox is open, the app asks first.
+
 ## Development
 
 ```bash
@@ -160,8 +201,10 @@ The unit tests cover the pure logic that determines pay (time rounding, duration
 4. Re-run without `--dry-run`; confirm the parsed rows preview, then that each row is typed into PeopleSoft.
 5. Check the ✓/✗ verification output matches the CSV before submitting.
 
+For the desktop app, start the same way: a **TRAC dry run** of the current period (tick *Dry run*, click *Start*, finish signing in to Firefox, click *Continue*). That covers starting Firefox, the TRAC sign-in, and parsing without touching PeopleSoft. Then do a full run and compare the ✓/✗ column with the PeopleSoft page before submitting.
+
 ## Notes
 
-- Tunables live in `ConfigSettings`: `pay_rate` (default `17.5`), `wait_time`, `short_wait_time`, and the two portal URLs. Change them there rather than in the pipeline code.
+- Tunables live in `ConfigSettings`: `wait_time`, `short_wait_time`, and the two portal URLs. Change them there rather than in the pipeline code. The pay rate is the `PAY_RATE` setting (default `17.5`).
 - The Firefox profile directory is reused across runs to help preserve login/session cookies (e.g., Duo two-factor state), reducing repeated 2FA prompts. When the session is still valid the login form is skipped automatically.
 - Generated artifacts (pay-period list, scraped HTML, per-period CSVs) are written under the user config directory, not the project directory, so re-running the tool won't clutter the repo.
